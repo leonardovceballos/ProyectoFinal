@@ -1,2 +1,0 @@
-# ProyectoFinal
-Game invaders lookalike
