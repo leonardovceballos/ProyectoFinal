@@ -15,7 +15,9 @@ import com.badlogic.gdx.graphics.glutils.ShapeRenderer;
 import com.badlogic.gdx.math.MathUtils;
 import com.badlogic.gdx.math.Rectangle;
 import com.badlogic.gdx.math.Vector2;
+import com.badlogic.gdx.utils.Pool;
 import com.badlogic.gdx.utils.ScreenUtils;
+import com.badlogic.gdx.utils.Timer;
 import com.badlogic.gdx.utils.viewport.FitViewport;
 import io.github.luismartinez.Entidades.*;
 
@@ -51,7 +53,6 @@ public class Main extends ApplicationAdapter {
     Boss jefe;
     private ShapeRenderer barraHP;
 
-
     private final static int TIEMPO_DISPARO_PLAYER = 150;
     private final static int VELOCIDAD_PLAYER = 300;
     private final static int VELOCIDAD_SUPER = 600;
@@ -59,6 +60,8 @@ public class Main extends ApplicationAdapter {
     private final float POWERUP_SPAWN_INTERVAL = 15f;
     private int vidas = 3;
     private int score;
+    private int bossSpawnRate;
+    private int bossHealth;
     private float enemySpawnTimer = 0;
     private float enemySpawnInterval = 2f;
     private float enemyShootTimer = 0f;
@@ -72,6 +75,9 @@ public class Main extends ApplicationAdapter {
     private boolean immune = false;
     private boolean superSpeed = false;
     private boolean fastBullets = false;
+
+    private Pool<Bullet> playerBulletPool;
+    private Pool<BulletEnemy> enemyBulletPool;
 
     private EnumMap<PowerType, Texture> powerTextures;
     private GameState currentState = GameState.MENU;
@@ -124,6 +130,23 @@ public class Main extends ApplicationAdapter {
         barraHP = new ShapeRenderer();
         jefe = null;
 
+        bossSpawnRate = 1000;
+        bossHealth = 1000;
+
+        playerBulletPool = new Pool<Bullet>(20, 100) {
+            @Override
+            protected Bullet newObject() {
+                return new Bullet(new Vector2(0, 0), bullet_img, 0);
+            }
+        };
+
+        enemyBulletPool = new Pool<BulletEnemy>(50, 200) { // Adjust capacities as needed for enemy bullets
+            @Override
+            protected BulletEnemy newObject() {
+                return new BulletEnemy(new Vector2(), bullet_img_enemy, 0);
+            }
+        };
+
 
         // Música desactivada por ahora
         // hit = Gdx.audio.newMusic(Gdx.files.internal("hit.mp3"));
@@ -170,7 +193,7 @@ public class Main extends ApplicationAdapter {
 
         if (Gdx.input.isTouched()) {
             touchPos.set(Gdx.input.getX(), Gdx.input.getY());
-            viewport.unproject(touchPos); // ajustamos a coordenadas del mundo
+            viewport.unproject(touchPos);
             player.getSprite().setCenterX(touchPos.x);
         }
 
@@ -229,14 +252,17 @@ public class Main extends ApplicationAdapter {
             powerUpSpawnTimer = 0;
         }
 
-        if (jefe == null && score >= 2000) {
+        if (jefe == null && score >= bossSpawnRate) {
             jefe = new Boss(
                 new Vector2(new Vector2(400 - 64, 480)),
                 boss_img,
                 30,
-                100
+                bossHealth,
+                viewport
             );
             jefe.getSprite().setSize(50, 50);
+            bossSpawnRate += 10000;
+            bossHealth += 1000;
         }
 
         updatePowerUps(delta);
@@ -249,56 +275,154 @@ public class Main extends ApplicationAdapter {
         playerRectangle.set(sprite.getX(), sprite.getY(), sprite.getWidth(), sprite.getHeight());
     }
 
+    private boolean updateSinglePlayerBullet(Bullet bullet, float delta) {
+        bullet.update(delta);
+        Sprite bSprite = bullet.getSprite();
+
+        if (bSprite.getY() > viewport.getWorldHeight()) {
+            playerBulletPool.free(bullet);
+            return true;
+        }
+        return false;
+    }
+
+    private boolean handlePlayerBulletEnemyCollision(Bullet bullet) {
+        Sprite bSprite = bullet.getSprite();
+        bulletRectangle.set(bSprite.getX(), bSprite.getY(), bSprite.getWidth(), bSprite.getHeight());
+
+        for (int j = enemies.size() - 1; j >= 0; j--) {
+            Enemy enemy = enemies.get(j);
+            Sprite eSprite = enemy.getSprite();
+            if (bulletRectangle.overlaps(eSprite.getBoundingRectangle())) {
+                explosiones.add(new Explosion(eSprite.getX(), eSprite.getY()));
+                enemies.remove(j);
+
+                playerBulletPool.free(bullet);
+                return true;
+            }
+        }
+        return false; // Bullet did not hit any enemy
+    }
+
+    private boolean handlePlayerBulletBossCollision(Bullet bullet) {
+        if (jefe != null && jefe.isAlive()) {
+            Sprite bSprite = bullet.getSprite();
+            bulletRectangle.set(bSprite.getX(), bSprite.getY(), bSprite.getWidth(), bSprite.getHeight());
+            Sprite bossSprite = jefe.getSprite();
+
+            if (bulletRectangle.overlaps(bossSprite.getBoundingRectangle())) {
+                jefe.bossHit(30);
+                explosiones.add(new Explosion(bossSprite.getX() + bossSprite.getWidth()/2, bossSprite.getY() + bossSprite.getHeight()/2));
+
+                if (!jefe.isAlive()) {
+                    explosiones.add(new Explosion(bossSprite.getX(), bossSprite.getY()));
+                    score += 5000;
+                    jefe = null;
+                }
+                playerBulletPool.free(bullet);
+                return true;
+            }
+        }
+        return false; // Bullet did not hit the boss
+    }
+
     private void updatePlayerBullets(float delta) {
         for (int i = player_bullets.size() - 1; i >= 0; i--) {
-            Sprite bSprite = player_bullets.get(i).getSprite();
-            bSprite.translateY(200 * delta);
-            bulletRectangle.set(bSprite.getX(), bSprite.getY(), bSprite.getWidth(), bSprite.getHeight());
+            Bullet bullet = player_bullets.get(i);
 
-            if (bSprite.getY() > 480) {
-                player_bullets.remove(i);
-                continue;
+            boolean removed = false;
+
+            if (updateSinglePlayerBullet(bullet, delta)) {
+                removed = true;
             }
 
-            for (int j = enemies.size() - 1; j >= 0; j--) {
-                Sprite eSprite = enemies.get(j).getSprite();
-                if (bulletRectangle.overlaps(eSprite.getBoundingRectangle())) {
-                    explosiones.add(new Explosion(eSprite.getX(), eSprite.getY()));
-                    enemies.remove(j);
-                    player_bullets.remove(i);
-                    score += 100;
-                    break;
+            if (!removed && handlePlayerBulletEnemyCollision(bullet)) {
+                removed = true;
+            }
+
+            if (!removed && handlePlayerBulletBossCollision(bullet)) {
+                removed = true;
+            }
+
+            if (removed) {
+                player_bullets.remove(i);
+            }
+        }
+    }
+
+    private boolean updateAndCheckEnemyBulletBounds(BulletEnemy bullet, float delta) {
+        bullet.update(delta);
+        Sprite bSprite = bullet.getSprite();
+
+        if (bSprite.getY() < -bSprite.getHeight()) {
+            enemyBulletPool.free(bullet);
+            return true;
+        }
+        return false;
+    }
+
+    private boolean handleEnemyBulletPlayerCollision(BulletEnemy bullet) {
+        if (!player.isAlive()) {
+            return false;
+        }
+
+        Sprite bSprite = bullet.getSprite();
+
+        playerRectangle.set(player.getSprite().getX(), player.getSprite().getY(),
+            player.getSprite().getWidth(), player.getSprite().getHeight());
+
+        if (bSprite.getBoundingRectangle().overlaps(playerRectangle)) {
+            enemyBulletPool.free(bullet);
+            return true;
+        }
+        return false;
+    }
+
+    private void processPlayerHit() {
+        if (activePower != PowerType.IMMUNE && activePower != PowerType.TRIPLE_POWER) {
+            vidas--;
+            explosiones.add(new Explosion(player.getSprite().getX(), player.getSprite().getY()));
+
+            player.setVisible(false);
+            Timer.schedule(new Timer.Task(){
+                @Override
+                public void run() {
+                    player.setVisible(true);
                 }
+            }, 0.2f);
+
+
+            if (vidas <= 0) {
+                currentState = GameState.GAME_OVER;
             }
         }
     }
 
     private void updateEnemyBullets(float delta) {
         for (int i = enemy_bullets.size() - 1; i >= 0; i--) {
-            Sprite bSprite = enemy_bullets.get(i).getSprite();
-            bSprite.translateY(-100 * delta);
+            BulletEnemy bullet = enemy_bullets.get(i);
 
-            if (bSprite.getY() < -bSprite.getHeight()) {
+            boolean bulletRemovedFromList = false;
+
+            if (updateAndCheckEnemyBulletBounds(bullet, delta)) {
                 enemy_bullets.remove(i);
+                bulletRemovedFromList = true;
                 continue;
             }
 
-            if (bSprite.getBoundingRectangle().overlaps(playerRectangle)) {
+            if (handleEnemyBulletPlayerCollision(bullet)) {
                 enemy_bullets.remove(i);
+                bulletRemovedFromList = true;
 
-                if (activePower != PowerType.IMMUNE && activePower != PowerType.TRIPLE_POWER) {
-                    vidas--;
-                    player.setVisible(false);
-                    explosiones.add(new Explosion(player.getSprite().getX(), player.getSprite().getY()));
-                    if (vidas <= 0) {
-                        currentState = GameState.GAME_OVER;
-                        return;
-                    }
+                processPlayerHit();
+
+                if (currentState == GameState.GAME_OVER) {
+                    return;
                 }
+                continue;
             }
         }
     }
-
     private void updateExplosions(float delta) {
         for (int i = explosiones.size() - 1; i >= 0; i--) {
             Explosion ex = explosiones.get(i);
@@ -409,21 +533,34 @@ public class Main extends ApplicationAdapter {
     private void createPlayerBullet() {
         float bulletWidth = 8;
         float bulletHeight = 16;
-        float bulletSpeed = fastBullets ? 400 : 150;
+        float bulletSpeed = fastBullets ? 200 : 150;
 
         float xCenter = player.getSprite().getX() + player.getSprite().getWidth() / 2f - bulletWidth / 2f;
         float yStart = player.getSprite().getY() + player.getSprite().getHeight();
 
-        Bullet bullet = new Bullet(new Vector2(xCenter, yStart), bullet_img, bulletSpeed);
+        Bullet bullet = playerBulletPool.obtain();
+        bullet.setPosition(new Vector2(xCenter, yStart));
+        bullet.setSpeed(bulletSpeed);
         bullet.getSprite().setSize(bulletWidth, bulletHeight);
+        bullet.setIsAlive(true);
+        bullet.setVisible(true);
         player_bullets.add(bullet);
 
         if (activePower == PowerType.TRIPLE_POWER) {
-            Bullet left = new Bullet(new Vector2(xCenter - 20, yStart), bullet_img, bulletSpeed);
-            Bullet right = new Bullet(new Vector2(xCenter + 20, yStart), bullet_img, bulletSpeed);
+            Bullet left = playerBulletPool.obtain();
+            left.setPosition(new Vector2(xCenter - 20, yStart));
+            left.setSpeed(bulletSpeed);
             left.getSprite().setSize(bulletWidth, bulletHeight);
-            right.getSprite().setSize(bulletWidth, bulletHeight);
+            left.setIsAlive(true);
+            left.setVisible(true);
             player_bullets.add(left);
+
+            Bullet right = playerBulletPool.obtain();
+            right.setPosition(new Vector2(xCenter + 20, yStart));
+            right.setSpeed(bulletSpeed);
+            right.getSprite().setSize(bulletWidth, bulletHeight);
+            right.setIsAlive(true);
+            right.setVisible(true);
             player_bullets.add(right);
         }
     }
@@ -442,16 +579,21 @@ public class Main extends ApplicationAdapter {
     private void createEnemyBullet(Enemy e) {
         float bulletWidth = 8;
         float bulletHeight = 16;
-        BulletEnemy bullet = new BulletEnemy(
-            new Vector2(
-                e.getSprite().getX() + e.getSprite().getWidth() / 2f - bulletWidth / 2f,
-                e.getSprite().getY()),
-            bullet_img_enemy,
-            50
-        );
+        float bulletSpeed = 100;
+
+        BulletEnemy bullet = enemyBulletPool.obtain();
+
+        bullet.setPosition(new Vector2(
+            e.getSprite().getX() + e.getSprite().getWidth() / 2f - bulletWidth / 2f,
+            e.getSprite().getY()
+        ));
+        bullet.setSpeed(bulletSpeed);
         bullet.getSprite().setSize(bulletWidth, bulletHeight);
+        bullet.setIsAlive(true);
+        bullet.setVisible(true);
+
         enemy_bullets.add(bullet);
-    }
+        }
 
     private void shootEnemyBullets(float delta) {
         enemyShootTimer += delta;
@@ -460,28 +602,6 @@ public class Main extends ApplicationAdapter {
             for (Enemy e : enemies) {
                 createEnemyBullet(e);
             }
-        }
-    }
-
-    private void resetGame() {
-        vidas = 3;
-        score = 0;
-        tiempoPartida = 0;
-        immune = false;
-        fastBullets = false;
-        superSpeed = false;
-        enemySpawnInterval = 2f;
-
-        player.setPosition(new Vector2(400 - 32, 50));
-        player.setVisible(true);
-
-        enemies.clear();
-        player_bullets.clear();
-        enemy_bullets.clear();
-        explosiones.clear();
-        if (jefe != null) {
-            jefe.setIsAlive(false);
-            jefe.resetHp();
         }
     }
 
@@ -537,9 +657,14 @@ public class Main extends ApplicationAdapter {
                 drawGameplay();
                 batch.end();
                 if (jefe != null && barraHP != null && jefe.isAlive()) {
-                    float barX = player.getPosition().x;
-                    float barY = player.getPosition().y - 20;
-                    drawHPBar(barX, barY, 60, 8);
+                    float barWidth = 200;
+                    float barHeight = 15;
+                    float margin = 10;
+
+                    float barX = margin;
+                    float barY = margin;
+
+                    drawHPBar(barX, barY, barWidth, barHeight);
                 }
                 return;
             case PAUSED:
@@ -617,12 +742,11 @@ public class Main extends ApplicationAdapter {
 
     private void drawHPBar(float x, float y, float width, float height) {
         float hp = jefe.getHp();
-        float maxHp = 100;
+        float maxHp = 1000;
 
         barraHP.setProjectionMatrix(batch.getProjectionMatrix());
         barraHP.begin(ShapeRenderer.ShapeType.Filled);
 
-        // Fondo (gris)
         barraHP.setColor(Color.WHITE);
         barraHP.rect(x, y, width, height);
 
@@ -650,14 +774,44 @@ public class Main extends ApplicationAdapter {
         batch.draw(backgroundTexture, 0, backgroundY + viewport.getWorldHeight(), viewport.getWorldWidth(), viewport.getWorldHeight());
     }
 
+    private void resetGame() {
+        vidas = 3;
+        score = 0;
+        tiempoPartida = 0;
+        immune = false;
+        fastBullets = false;
+        superSpeed = false;
+        enemySpawnInterval = 2f;
+
+        player.setPosition(new Vector2(400 - 32, 50));
+        player.setVisible(true);
+
+        enemies.clear();
+        player_bullets.clear();
+        enemy_bullets.clear();
+        explosiones.clear();
+        if (jefe != null) {
+            jefe.setIsAlive(false);
+            jefe.resetHp();
+        }
+        jefe = null;
+
+        bossSpawnRate = 1000;
+        bossHealth = 1000;
+    }
+
     @Override
     public void dispose() {
         batch.dispose();
         player_img.dispose();
         enemy_img.dispose();
         bullet_img.dispose();
+        bullet_img_enemy.dispose();
+        boss_img.dispose();
         fontScore.dispose();
         backgroundTexture.dispose();
+        barraHP.dispose();
+
         for (Texture tex : powerTextures.values()) {
             tex.dispose();
         }

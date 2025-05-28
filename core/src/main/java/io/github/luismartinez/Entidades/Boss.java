@@ -3,16 +3,22 @@ package io.github.luismartinez.Entidades;
 import com.badlogic.gdx.Gdx;
 import com.badlogic.gdx.graphics.Texture;
 import com.badlogic.gdx.math.Vector2;
+import com.badlogic.gdx.utils.viewport.FitViewport;
+import com.badlogic.gdx.utils.viewport.Viewport;
 
 public class Boss extends Enemy {
 
     protected int hp, maxHp;
-    protected boolean incrementaHorizontal =true;
+    protected boolean incrementaHorizontal = true;
+    protected FitViewport viewport;
+    private static float WORLD_WIDTH;
+    private static float WORLD_HEIGHT;
 
-    public Boss(Vector2 position, Texture img, float speed, int hp) {
+    public Boss(Vector2 position, Texture img, float speed, int hp, FitViewport viewport) {
         super(position, img, speed);
         this.hp = hp;
         this.maxHp = hp;
+        this.viewport = viewport;
     }
 
     public int getHp() {
@@ -32,13 +38,16 @@ public class Boss extends Enemy {
     }
 
     public void update(float deltaTime){
-        if (position.y > Gdx.graphics.getHeight() - 200) { // o la altura que desees
-            position.y -= speed * deltaTime;
+        WORLD_HEIGHT = viewport.getWorldHeight();
+        WORLD_WIDTH = viewport.getWorldWidth();
+
+        if (position.y > WORLD_HEIGHT - sprite.getHeight()) {
+            position.y -= (speed * deltaTime) * .75f;
         }
 
         if (position.x <= 0) {
             incrementaHorizontal = true;
-        } else if (position.x + sprite.getWidth() >= Gdx.graphics.getWidth()) {
+        } else if (position.x > WORLD_WIDTH - sprite.getWidth()) {
             incrementaHorizontal = false;
         }
 
