@@ -32,12 +32,14 @@ public class Boss extends Enemy {
     }
 
     public void update(float deltaTime){
-        position.y -= speed * deltaTime;
+        if (position.y > Gdx.graphics.getHeight() - 200) { // o la altura que desees
+            position.y -= speed * deltaTime;
+        }
 
-        if(position.x<=10){
+        if (position.x <= 0) {
             incrementaHorizontal = true;
-        } else if (position.x>= Gdx.graphics.getWidth()-10) {
-            incrementaHorizontal =false;
+        } else if (position.x + sprite.getWidth() >= Gdx.graphics.getWidth()) {
+            incrementaHorizontal = false;
         }
 
         if(incrementaHorizontal){

@@ -231,11 +231,12 @@ public class Main extends ApplicationAdapter {
 
         if (jefe == null && score >= 2000) {
             jefe = new Boss(
-                new Vector2(player.getPosition().x, player.getPosition().y + 100),
+                new Vector2(new Vector2(400 - 64, 480)),
                 boss_img,
                 30,
                 100
             );
+            jefe.getSprite().setSize(50, 50);
         }
 
         updatePowerUps(delta);
@@ -569,7 +570,7 @@ public class Main extends ApplicationAdapter {
             player.getSprite().draw(batch);
         }
 
-        if (jefe != null) {
+        if (jefe != null && jefe.isAlive()) {
             jefe.getSprite().draw(batch);
         }
 
