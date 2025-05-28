@@ -21,9 +21,12 @@ import com.badlogic.gdx.utils.Timer;
 import com.badlogic.gdx.utils.viewport.FitViewport;
 import io.github.luismartinez.Entidades.*;
 
-import java.util.ArrayList;
-import java.util.EnumMap;
-import java.util.Random;
+import java.io.BufferedReader;
+import java.io.IOException;
+import java.io.InputStreamReader;
+import java.io.PrintWriter;
+import java.net.Socket;
+import java.util.*;
 
 public class Main extends ApplicationAdapter {
     private SpriteBatch batch;
@@ -36,6 +39,7 @@ public class Main extends ApplicationAdapter {
     private Texture bullet_img;
     private Texture bullet_img_enemy;
     private Texture boss_img;
+    private Texture remote_player_img;
 
     private Player player;
 
@@ -57,7 +61,9 @@ public class Main extends ApplicationAdapter {
     private final static int VELOCIDAD_PLAYER = 300;
     private final static int VELOCIDAD_SUPER = 600;
     private final static int TIEMPO_DISPARO_ENEMY = 250;
+    private final static int SERVER_PORT = 12345;
     private final float POWERUP_SPAWN_INTERVAL = 15f;
+    private final static long NETWORK_SEND_INTERVAL_MS = 50;
     private int vidas = 3;
     private int score;
     private int bossSpawnRate;
@@ -83,6 +89,17 @@ public class Main extends ApplicationAdapter {
     private GameState currentState = GameState.MENU;
     private PowerType activePower = null;
 
+    private Socket clientSocket;
+    private PrintWriter out;
+    private BufferedReader in;
+    private String myClientId;
+    private Map<String, RemotePlayer> remotePlayers;
+
+    private static final String SERVER_IP = "localhost";
+
+
+
+
     @Override
     public void create() {
         batch = new SpriteBatch();
@@ -102,6 +119,7 @@ public class Main extends ApplicationAdapter {
         bullet_img = new Texture("Bullet.png");
         bullet_img_enemy = new Texture("Alien_Bullet.png");
         boss_img = new Texture("purple.png");
+        remote_player_img = new Texture("player.png");
 
         powerTextures = new EnumMap<>(PowerType.class);
         powerTextures.put(PowerType.IMMUNE, new Texture("inmune.png"));
@@ -118,6 +136,7 @@ public class Main extends ApplicationAdapter {
         explosiones = new ArrayList<>();
         enemy_bullets = new ArrayList<>();
         powerUps = new ArrayList<>();
+        remotePlayers = new HashMap<>();
 
         Random posicion_random = new Random();
 
@@ -147,6 +166,7 @@ public class Main extends ApplicationAdapter {
             }
         };
 
+        connectToServer();
 
         // Música desactivada por ahora
         // hit = Gdx.audio.newMusic(Gdx.files.internal("hit.mp3"));
@@ -800,6 +820,88 @@ public class Main extends ApplicationAdapter {
         bossHealth = 1000;
     }
 
+    private void connectToServer() {
+        new Thread(() -> {
+            try {
+                clientSocket = new Socket(SERVER_IP, SERVER_PORT);
+                out = new PrintWriter(clientSocket.getOutputStream(), true);
+                in = new BufferedReader(new InputStreamReader(clientSocket.getInputStream()));
+
+                System.out.println("Connected to game server.");
+
+                myClientId = clientSocket.getLocalAddress().getHostAddress() + ":" + clientSocket.getLocalPort();
+                System.out.println("My Client ID: " + myClientId);
+
+                new Thread(this::listenForServerMessages).start();
+
+            } catch (IOException e) {
+                System.err.println("Could not connect to server: " + e.getMessage());
+
+            }
+        }).start();
+    }
+    private void listenForServerMessages() {
+        try {
+            String serverMessage;
+            while ((serverMessage = in.readLine()) != null) {
+                String[] parts = serverMessage.split(":");
+                if (parts.length == 3) {
+                    String id = parts[0];
+                    float x = Float.parseFloat(parts[1]);
+                    float y = Float.parseFloat(parts[2]);
+
+                    if (!id.equals(myClientId)) {
+                        if (!remotePlayers.containsKey(id)) {
+                            RemotePlayer newRemotePlayer = new RemotePlayer(id, new Vector2(x, y), remote_player_img);
+                            remotePlayers.put(id, newRemotePlayer);
+                            System.out.println("New remote player joined: " + id);
+
+                        } else {
+                            RemotePlayer existingRemotePlayer = remotePlayers.get(id);
+                            existingRemotePlayer.setPosition(new Vector2(x, y));
+
+                        }
+                    }
+                } else {
+                    System.out.println("Received malformed message: " + serverMessage);
+
+                }
+            }
+        } catch (IOException e) {
+            System.err.println("Error listening for server messages: " + e.getMessage());
+
+        } finally {
+            cleanupNetwork();
+
+        }
+    }
+
+    private void sendMyPosition() {
+        if (out != null && clientSocket.isConnected()) {
+            out.println(player.getPosition().x + ":" + player.getPosition().y);
+
+        }
+    }
+
+    private void cleanupNetwork() {
+        if (clientSocket != null && !clientSocket.isClosed()) {
+            try {
+                clientSocket.close();
+            } catch (IOException e) {
+                e.printStackTrace();
+            }
+        }
+        if (out != null) out.close();
+        if (in != null) {
+            try { in.close(); } catch (IOException e) { e.printStackTrace(); }
+        }
+        clientSocket = null;
+        out = null;
+        in = null;
+        remotePlayers.clear();
+        System.out.println("Network resources cleaned up.");
+    }
+
     @Override
     public void dispose() {
         batch.dispose();
@@ -816,4 +918,5 @@ public class Main extends ApplicationAdapter {
             tex.dispose();
         }
     }
+
 }
