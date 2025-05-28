@@ -11,6 +11,7 @@ import com.badlogic.gdx.graphics.g2d.BitmapFont;
 import com.badlogic.gdx.graphics.g2d.Sprite;
 import com.badlogic.gdx.graphics.g2d.SpriteBatch;
 import com.badlogic.gdx.graphics.g2d.freetype.FreeTypeFontGenerator;
+import com.badlogic.gdx.graphics.glutils.ShapeRenderer;
 import com.badlogic.gdx.math.MathUtils;
 import com.badlogic.gdx.math.Rectangle;
 import com.badlogic.gdx.math.Vector2;
@@ -32,6 +33,8 @@ public class Main extends ApplicationAdapter {
     private Texture enemy_img;
     private Texture bullet_img;
     private Texture bullet_img_enemy;
+    private Texture boss_img;
+
     private Player player;
 
     private Vector2 touchPos;
@@ -44,6 +47,10 @@ public class Main extends ApplicationAdapter {
     private ArrayList<PowerUp> powerUps;
 
     private BitmapFont fontScore;
+
+    Boss jefe;
+    private ShapeRenderer barraHP;
+
 
     private final static int TIEMPO_DISPARO_PLAYER = 150;
     private final static int VELOCIDAD_PLAYER = 300;
@@ -88,6 +95,7 @@ public class Main extends ApplicationAdapter {
         enemy_img = new Texture("yellow.png");
         bullet_img = new Texture("Bullet.png");
         bullet_img_enemy = new Texture("Alien_Bullet.png");
+        boss_img = new Texture("purple.png");
 
         powerTextures = new EnumMap<>(PowerType.class);
         powerTextures.put(PowerType.IMMUNE, new Texture("inmune.png"));
@@ -112,6 +120,10 @@ public class Main extends ApplicationAdapter {
         parameter.size = 30;
         parameter.color = Color.WHITE;
         fontScore = generator.generateFont(parameter);
+
+        barraHP = new ShapeRenderer();
+        jefe = null;
+
 
         // Música desactivada por ahora
         // hit = Gdx.audio.newMusic(Gdx.files.internal("hit.mp3"));
@@ -205,6 +217,7 @@ public class Main extends ApplicationAdapter {
         updatePlayerPosition(worldWidth);
         spawnEnemies(delta);
         updateEnemies(delta);
+        updateBoss(delta);
         updatePlayerBullets(delta);
         shootEnemyBullets(delta);
         updateEnemyBullets(delta);
@@ -214,6 +227,15 @@ public class Main extends ApplicationAdapter {
         if (powerUpSpawnTimer >= POWERUP_SPAWN_INTERVAL) {
             spawnRandomPowerUp();
             powerUpSpawnTimer = 0;
+        }
+
+        if (jefe == null && score >= 2000) {
+            jefe = new Boss(
+                new Vector2(player.getPosition().x, player.getPosition().y + 100),
+                boss_img,
+                30,
+                100
+            );
         }
 
         updatePowerUps(delta);
@@ -287,6 +309,7 @@ public class Main extends ApplicationAdapter {
     }
 
     private void updateEnemies(float delta) {
+
         for (int i = enemies.size() - 1; i >= 0; i--) {
             Sprite eSprite = enemies.get(i).getSprite();
             eSprite.translateY(-60 * delta);
@@ -309,6 +332,25 @@ public class Main extends ApplicationAdapter {
                     resetGame();
                 }
             }
+        }
+    }
+
+    private void updateBoss(float deltaTime) {
+        if (jefe == null) return;
+
+        if (jefe.isAlive()) {
+            jefe.update(deltaTime);
+
+            if (jefe.canShoot()) {
+                enemy_bullets.add(new BulletEnemy(
+                    new Vector2(jefe.getPosition().x + jefe.getSprite().getWidth() / 2f, jefe.getPosition().y),
+                    bullet_img_enemy,
+                    200
+                ));
+                jefe.setLastShoot(System.currentTimeMillis());
+            }
+        } else {
+            jefe = null;
         }
     }
 
@@ -436,6 +478,10 @@ public class Main extends ApplicationAdapter {
         player_bullets.clear();
         enemy_bullets.clear();
         explosiones.clear();
+        if (jefe != null) {
+            jefe.setIsAlive(false);
+            jefe.resetHp();
+        }
     }
 
     private void applyPower(PowerType type) {
@@ -489,6 +535,11 @@ public class Main extends ApplicationAdapter {
             case RUNNING:
                 drawGameplay();
                 batch.end();
+                if (jefe != null && barraHP != null && jefe.isAlive()) {
+                    float barX = player.getPosition().x;
+                    float barY = player.getPosition().y - 20;
+                    drawHPBar(barX, barY, 60, 8);
+                }
                 return;
             case PAUSED:
                 drawGameplay();
@@ -516,6 +567,10 @@ public class Main extends ApplicationAdapter {
     private void drawGameplay() {
         if (player.isVisible()) {
             player.getSprite().draw(batch);
+        }
+
+        if (jefe != null) {
+            jefe.getSprite().draw(batch);
         }
 
         for (Enemy e : enemies) {
@@ -556,13 +611,32 @@ public class Main extends ApplicationAdapter {
             batch.draw(icon, iconX, iconY, size, size);
             fontScore.draw(batch, String.format("%.0f", powerTimer), textX, textY);
         }
+
     }
+
+    private void drawHPBar(float x, float y, float width, float height) {
+        float hp = jefe.getHp();
+        float maxHp = 100;
+
+        barraHP.setProjectionMatrix(batch.getProjectionMatrix());
+        barraHP.begin(ShapeRenderer.ShapeType.Filled);
+
+        // Fondo (gris)
+        barraHP.setColor(Color.WHITE);
+        barraHP.rect(x, y, width, height);
+
+        float hpWidth = (hp / maxHp) * width;
+        barraHP.setColor(Color.RED);
+        barraHP.rect(x, y, hpWidth, height);
+
+        barraHP.end();
+    }
+
 
     private void drawPauseScreen() {
         fontScore.draw(batch, "JUEGO EN PAUSA", 300, 260);
         fontScore.draw(batch, "PRESIONA ESC PARA CONTINUAR", 230, 220);
     }
-
 
     private void drawBackground(float delta) {
         backgroundY -= backgroundSpeed * delta;
