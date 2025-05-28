@@ -77,6 +77,7 @@ public class Main extends ApplicationAdapter {
     private float backgroundY = 0;
     private float backgroundSpeed = 5;
     private long disparo_Timer = 0;
+    private long lastSendTime = 0;
 
     private boolean immune = false;
     private boolean superSpeed = false;
@@ -253,9 +254,13 @@ public class Main extends ApplicationAdapter {
 
         if (currentState == GameState.RUNNING) {
             tiempoPartida += delta;
-        }
 
-        player.setVisible(true);
+            if (clientSocket != null && out != null && System.currentTimeMillis() >= lastSendTime + NETWORK_SEND_INTERVAL_MS) {
+                sendMyPosition();
+                lastSendTime = System.currentTimeMillis();
+
+            }
+        }
 
         updatePlayerPosition(worldWidth);
         spawnEnemies(delta);
@@ -270,23 +275,32 @@ public class Main extends ApplicationAdapter {
         if (powerUpSpawnTimer >= POWERUP_SPAWN_INTERVAL) {
             spawnRandomPowerUp();
             powerUpSpawnTimer = 0;
+
         }
 
         if (jefe == null && score >= bossSpawnRate) {
             jefe = new Boss(
-                new Vector2(new Vector2(400 - 64, 480)),
+                new Vector2(400 - 64, 480),
                 boss_img,
                 30,
                 bossHealth,
                 viewport
+
             );
             jefe.getSprite().setSize(50, 50);
             bossSpawnRate += 10000;
             bossHealth += 1000;
-        }
 
+        }
         updatePowerUps(delta);
         updateActivePowers(delta);
+
+        synchronized (remotePlayers) {
+            for (RemotePlayer rp : remotePlayers.values()) {
+                rp.update(delta);
+
+            }
+        }
     }
 
     private void updatePlayerPosition(float worldWidth) {
@@ -316,7 +330,7 @@ public class Main extends ApplicationAdapter {
             if (bulletRectangle.overlaps(eSprite.getBoundingRectangle())) {
                 explosiones.add(new Explosion(eSprite.getX(), eSprite.getY()));
                 enemies.remove(j);
-
+                score += 100;
                 playerBulletPool.free(bullet);
                 return true;
             }
@@ -715,6 +729,12 @@ public class Main extends ApplicationAdapter {
             player.getSprite().draw(batch);
         }
 
+        synchronized (remotePlayers) {
+            for (RemotePlayer rp : remotePlayers.values()) {
+                rp.getSprite().draw(batch);
+            }
+        }
+
         if (jefe != null && jefe.isAlive()) {
             jefe.getSprite().draw(batch);
         }
@@ -843,24 +863,26 @@ public class Main extends ApplicationAdapter {
     private void listenForServerMessages() {
         try {
             String serverMessage;
+
             while ((serverMessage = in.readLine()) != null) {
                 String[] parts = serverMessage.split(":");
-                if (parts.length == 3) {
-                    String id = parts[0];
-                    float x = Float.parseFloat(parts[1]);
-                    float y = Float.parseFloat(parts[2]);
+
+                if (parts.length == 4) {
+                    String id = parts[0] + ":" + parts[1];
+                    float x = Float.parseFloat(parts[2]);
+                    float y = Float.parseFloat(parts[3]);
 
                     if (!id.equals(myClientId)) {
-                        if (!remotePlayers.containsKey(id)) {
-                            RemotePlayer newRemotePlayer = new RemotePlayer(id, new Vector2(x, y), remote_player_img);
-                            remotePlayers.put(id, newRemotePlayer);
-                            System.out.println("New remote player joined: " + id);
-
-                        } else {
-                            RemotePlayer existingRemotePlayer = remotePlayers.get(id);
-                            existingRemotePlayer.setPosition(new Vector2(x, y));
-
-                        }
+                        Gdx.app.postRunnable(() -> {
+                            RemotePlayer rp = remotePlayers.get(id);
+                            if (rp == null) {
+                                rp = new RemotePlayer(id, new Vector2(x, y), remote_player_img);
+                                rp.getSprite().setSize(64, 64);
+                                remotePlayers.put(id, rp);
+                                System.out.println("New remote player joined: " + id);
+                            }
+                            rp.setPosition(new Vector2(x, y));
+                        });
                     }
                 } else {
                     System.out.println("Received malformed message: " + serverMessage);
@@ -869,17 +891,14 @@ public class Main extends ApplicationAdapter {
             }
         } catch (IOException e) {
             System.err.println("Error listening for server messages: " + e.getMessage());
-
         } finally {
             cleanupNetwork();
-
         }
     }
 
     private void sendMyPosition() {
         if (out != null && clientSocket.isConnected()) {
             out.println(player.getPosition().x + ":" + player.getPosition().y);
-
         }
     }
 

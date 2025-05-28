@@ -40,12 +40,11 @@ public class GameServer {
         }
     }
 
-    // Handles each client connection
     private static class ClientHandler implements Runnable {
         private Socket clientSocket;
         private BufferedReader reader;
         private PrintWriter writer;
-        private String clientId; // A unique ID for this client (e.g., its address or a simple counter)
+        private String clientId;
 
         public ClientHandler(Socket socket) {
             this.clientSocket = socket;
@@ -67,16 +66,10 @@ public class GameServer {
             try {
                 String clientMessage;
                 while ((clientMessage = reader.readLine()) != null) {
-                    // Expected format: "PLAYER_UPDATE:ID:X:Y"
-                    // Or for a new client: "NEW_CLIENT:ID" (optional, but good for client to know its ID)
-                    // For now, let's assume they send "ID:X:Y"
-
-                    // Prepend client ID to the message before broadcasting
                     String fullMessage = clientId + ":" + clientMessage;
-                    broadcast(fullMessage, this); // Broadcast to all other clients
+                    broadcast(fullMessage, this);
                 }
             } catch (IOException e) {
-                // Client disconnected or error
                 System.out.println("Client disconnected: " + clientId + " (" + e.getMessage() + ")");
             } finally {
                 try {
@@ -84,7 +77,7 @@ public class GameServer {
                 } catch (IOException e) {
                     e.printStackTrace();
                 }
-                clients.remove(this); // Remove from the list of active clients
+                clients.remove(this);
                 System.out.println("Client " + clientId + " removed. Active clients: " + clients.size());
             }
         }

@@ -19,4 +19,11 @@ public class RemotePlayer extends Entity {
         return id;
     }
 
+    public void setPosition(Vector2 newPosition) {
+        this.position.set(newPosition);
+        this.sprite.setPosition(newPosition.x, newPosition.y);
+    }
+
+    public void update(float delta) {
+    }
 }
